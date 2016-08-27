@@ -45,22 +45,34 @@ update_time()
 	run_adb shell "toolbox date $(date +%s) ||
 	               toolbox date -s $(date +%Y%m%d.%H%M%S)" &&
 	run_adb shell setprop persist.sys.timezone $TIMEZONE
+
+	has_timekeep=$(run_adb shell ls /system/bin/timekeep | tr -d '\r\n')
+	if [ "${has_timekeep}" = "/system/bin/timekeep" ]; then
+	        cur_date=$(date +%s)
+	        since_epoch=$(run_adb shell cat /sys/class/rtc/rtc0/since_epoch | tr -d '\r\n')
+		timeadjust=$(echo "${cur_date}-${since_epoch}" | bc)
+		run_adb shell setprop persist.sys.timeadjust ${timeadjust}
+		run_adb shell timekeep restore
+	fi;
 }
 
 fastboot_flash_image()
 {
-	# $1 = {userdata,boot,system}
-	PARTITION=$1
-	if [ "$DEVICE" == "flatfish" ] && [ "$PARTITION" == "userdata" ]; then
-		PARTITION="data"
+	# $1 = {userdata,boot,system,recovery} the image filename
+	# $2 = {userdata,boot,system,recovery} the fastboot partition target
+	#    if non specified, then $2 = $1
+	PARTITION_FILE=$1
+	PARTITION_NAME=$2
+
+	if [ -z "${PARTITION_NAME}" ]; then
+		PARTITION_NAME=${PARTITION_FILE}
 	fi
-	if [ "$PARTITION" == "recovery" ]; then
-		if [ "$DEVICE" == "aries" ] || [ "$DEVICE" == "shinano" ]; then
-			PARTITION="FOTAKernel"
-		fi
+
+	if [ "$DEVICE" == "flatfish" ] && [ "${PARTITION_NAME}" == "userdata" ]; then
+		PARTITION_NAME="data"
 	fi
-	imgpath="out/target/product/$DEVICE/$1.img"
-	out="$(run_fastboot flash "$PARTITION" "$imgpath" 2>&1)"
+	imgpath="out/target/product/$DEVICE/${PARTITION_FILE}.img"
+	out="$(run_fastboot flash "${PARTITION_NAME}" "$imgpath" 2>&1)"
 	rv="$?"
 	echo "$out"
 
@@ -138,7 +150,7 @@ flash_fastboot()
 	"")
 		VERB="erase"
 		if [ "$DEVICE" == "hammerhead" ] || [ "$DEVICE" == "mako" ] ||
-		[ "$DEVICE" == "flo" ]; then
+		[ "$DEVICE" == "flo" ] || [ "$DEVICE" == "fugu" ]; then
 			VERB="format"
 		fi
 		DATA_PART_NAME="userdata"
@@ -153,9 +165,11 @@ flash_fastboot()
 				return $?
 			fi
 		fi
-		if [ "$DEVICE" == "aries" ] || [ "$DEVICE" == "shinano" ]; then
-			fastboot_flash_image recovery
-		fi
+		case ${DEVICE} in
+		"aries"|"leo"|"scorpion"|"sirius"|"castor"|"castor_windy"|"honami"|"amami"|"tianchi"|"flamingo"|"eagle"|"seagull")
+			fastboot_flash_image recovery FOTAKernel
+			;;
+		esac
 		fastboot_flash_image userdata &&
 		fastboot_flash_image_if_exists cache &&
 		fastboot_flash_image_if_exists boot &&
@@ -341,6 +355,8 @@ done
 
 case "$PROJECT" in
 "shallow")
+	resp=`run_adb root` || exit $?
+	[ "$resp" != "adbd is already running as root" ] && run_adb wait-for-device
 	run_adb shell stop b2g &&
 	run_adb remount &&
 	flash_gecko &&
@@ -374,7 +390,7 @@ case "$PROJECT" in
 esac
 
 case "$DEVICE" in
-"leo"|"hamachi"|"helix"|"sp6821a_gonk")
+"hamachi"|"helix"|"sp6821a_gonk")
 	if $FULLFLASH; then
 		flash_fastboot nounlock $PROJECT
 		exit $?
@@ -391,11 +407,11 @@ case "$DEVICE" in
 	exit $?
 	;;
 
-"flame"|"otoro"|"unagi"|"keon"|"peak"|"inari"|"wasabi"|"flatfish"|"shinano"|"aries"|"scx15_sp7715"*)
+"flame"|"otoro"|"unagi"|"keon"|"peak"|"inari"|"wasabi"|"flatfish"|"aries"|"leo"|"scorpion"|"sirius"|"castor"|"castor_windy"|"honami"|"amami"|"tianchi"|"flamingo"|"eagle"|"seagull"|"scx15_sp7715"*|"zte_p821a10")
 	flash_fastboot nounlock $PROJECT
 	;;
 
-"panda"|"maguro"|"crespo"|"crespo4g"|"mako"|"hammerhead"|"flo")
+"panda"|"maguro"|"crespo"|"crespo4g"|"mako"|"hammerhead"|"flo"|"shamu"|"FP2"|"fugu")
 	flash_fastboot unlock $PROJECT
 	;;
 
